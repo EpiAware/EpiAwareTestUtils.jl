@@ -1,0 +1,37 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  test:
+    desc: Run the test suite
+    cmds:
+      - julia --project=test -e 'using Pkg; Pkg.instantiate()'
+      - julia --project=test test/runtests.jl
+
+  format:
+    desc: Format all Julia files in place
+    cmds:
+      - julia -e 'using JuliaFormatter; format(["src", "test", "docs"])'
+
+  format-check:
+    desc: Check formatting without modifying files
+    cmds:
+      - >-
+        julia -e 'using JuliaFormatter;
+        ok = format(["src", "test", "docs"]; overwrite = false);
+        exit(ok ? 0 : 1)'
+
+  docs:
+    desc: Build the documentation
+    cmds:
+      - julia --project=docs -e 'using Pkg; Pkg.instantiate()'
+      - julia --project=docs docs/make.jl
+
+  precommit:
+    desc: Run pre-commit hooks on all files
+    cmds:
+      - pre-commit run --all-files

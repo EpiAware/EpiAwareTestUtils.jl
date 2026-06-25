@@ -1,0 +1,33 @@
+"""
+    EpiAwareTestUtils
+
+Shared, package-agnostic test utilities for EpiAware Julia packages.
+
+The helpers here are deliberately generic: they take a target module or a
+backend/scenario registry and run a standard check over it, so each EpiAware
+package can reuse one implementation rather than copying the same boilerplate.
+
+Two groups are provided.
+
+  - Package-quality wrappers ([`test_aqua`](@ref), [`test_jet`](@ref),
+    [`test_explicit_imports`](@ref)) run Aqua, JET, and ExplicitImports over a
+    target module. Aqua and ExplicitImports run in-process; JET runs in an
+    isolated environment to avoid version clashes.
+  - An AD-gradient harness ([`check_broken`](@ref),
+    [`test_working_backend`](@ref), [`test_partial_backend`](@ref)) checks a
+    package's reverse/forward AD backends against a ForwardDiff reference. It
+    works on any registry satisfying the [`ADRegistry`](@ref) contract.
+
+Package-specific fixtures (the actual distributions, models, or interface
+checklists a package wants to exercise) stay in that package. This module only
+supplies the reusable scaffolding.
+"""
+module EpiAwareTestUtils
+
+include("quality.jl")
+include("ad_harness.jl")
+
+export test_aqua, test_jet, test_explicit_imports
+export ADRegistry, check_broken, test_working_backend, test_partial_backend
+
+end # module EpiAwareTestUtils
