@@ -25,9 +25,16 @@ Two groups are provided.
 A [`scaffold`](@ref) helper writes the shipped standard configuration AND test
 infrastructure into a package — root dev config, CI caller workflows +
 dependabot, and the QA/AD/benchmark test-infra drivers that call these
-helpers — so a package adopts the whole kit at once. [`update`](@ref) re-applies
-the managed standard files (the scheduled template-sync entry point), leaving
-package-owned tests, AD scenarios, and QA config values untouched.
+helpers — so a package adopts the whole kit at once. [`generate`](@ref) does the
+same for a brand-new package, laying down its `Project.toml` and source module
+first. [`update`](@ref) re-applies the managed standard files (the scheduled
+template-sync entry point), leaving package-owned tests, AD scenarios, and QA
+config values untouched.
+
+The AD harness + AD CI are OPT-IN: `scaffold`/`generate`/`update` take an
+`ad::Bool` keyword (default `true`). A numerical package keeps `ad = true`; a
+tooling/non-numerical package passes `ad = false` to scaffold none of the AD
+infrastructure. The kit manages its OWN repo with `ad = false`.
 
 A [`Benchmarks`](@ref EpiAwarePackageTools.Benchmarks) submodule supplies the
 generic benchmark-reporting harness: turning AirspeedVelocity or BenchmarkTools
@@ -50,7 +57,7 @@ export test_aqua, test_jet, test_explicit_imports
 export test_docstring_format, test_ext_ambiguities, test_doctest,
        test_formatting, test_linting
 export on_surface_ambiguities, raw_ambiguity_count
-export scaffold, update, scaffold_inputs
+export scaffold, update, generate, scaffold_inputs
 export ADRegistry, check_broken, test_working_backend, test_partial_backend
 
 end # module EpiAwarePackageTools

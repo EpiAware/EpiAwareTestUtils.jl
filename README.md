@@ -1,11 +1,16 @@
 # EpiAwarePackageTools.jl
 
+<!-- badges:start -->
 | | |
 |---|---|
-| Docs | [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://epiawarepackagetools.epiaware.org/dev/) |
+| Docs | [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://epiawarepackagetools.epiaware.org/stable/) [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://epiawarepackagetools.epiaware.org/dev/) |
 | CI | [![Test](https://github.com/EpiAware/EpiAwarePackageTools.jl/actions/workflows/test.yaml/badge.svg?branch=main)](https://github.com/EpiAware/EpiAwarePackageTools.jl/actions/workflows/test.yaml) [![codecov](https://codecov.io/gh/EpiAware/EpiAwarePackageTools.jl/graph/badge.svg)](https://codecov.io/gh/EpiAware/EpiAwarePackageTools.jl) |
-| Quality | [![SciML Code Style](https://img.shields.io/static/v1?label=code%20style&message=SciML&color=9558b2&labelColor=389826)](https://github.com/SciML/SciMLStyle) [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl) [![JET](https://img.shields.io/badge/%E2%9C%88%EF%B8%8F%20tested%20with%20-%20JET.jl%20-%20red)](https://github.com/aviatesk/JET.jl) [![ColPrac](https://img.shields.io/badge/ColPrac-Contributor%27s%20Guide-blueviolet)](https://github.com/SciML/ColPrac) |
+| Quality | [![SciML Code Style](https://img.shields.io/static/v1?label=code%20style&message=SciML&color=9558b2&labelColor=389826)](https://github.com/SciML/SciMLStyle) [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl) [![JET](https://img.shields.io/badge/%E2%9C%88%EF%B8%8F%20tested%20with%20-%20JET.jl%20-%20red)](https://github.com/aviatesk/JET.jl) |
 | License | [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) |
+
+<!-- Once registered, add a version badge, e.g.:
+[![EpiAwarePackageTools](https://juliahub.com/docs/General/EpiAwarePackageTools/stable/version.svg)](https://juliahub.com/ui/Packages/General/EpiAwarePackageTools) -->
+<!-- badges:end -->
 
 Shared, package-agnostic test utilities for [EpiAware](https://github.com/EpiAware) Julia packages.
 
@@ -80,14 +85,41 @@ test_ext_ambiguities(MyPackage, :MyPackageOtherExt; broken = true)
 
 `scaffold` writes the whole shipped tooling — config, CI, and test
 infrastructure — into a package so it adopts the standard in one call.
-`update` re-applies just the managed standard files later.
+`update` re-applies just the managed standard files later. `generate` does the
+same for a brand-new package, writing its `Project.toml` and source module
+first.
 
 ```julia
 using EpiAwarePackageTools
 
-scaffold(pkgdir(MyPackage))   # adopt: write managed infra + owned skeletons
-update(pkgdir(MyPackage))     # sync: re-apply only managed files, report drift
+scaffold(pkgdir(MyPackage))            # adopt into an existing package
+update(pkgdir(MyPackage))             # sync: re-apply managed files, report drift
+generate("path/to/NewPkg", "NewPkg")  # create a fresh package, then scaffold it
 ```
+
+**AD is opt-in.** `scaffold`/`generate`/`update` take an `ad::Bool` keyword
+(default `true`). A numerical package keeps `ad = true` and gets the AD CI
+caller (`.github/workflows/ad.yaml`), the AD test harness (`test/ad/`,
+`test/ADFixtures/`), per-backend `ad-*` codecov flags, and the `test-ad` Taskfile
+targets. A tooling/non-numerical package passes `ad = false` to scaffold NONE of
+that AD infrastructure — the files that vary by AD content (`Taskfile.yml`,
+`codecov.yml`, `test/Project.toml`) are written in their no-AD variants. The kit
+itself is a tooling package, so it manages its OWN repo with `ad = false` and a
+`self-drift` CI check proves `update("."; ad = false)` yields zero drift.
+
+```julia
+scaffold(pkgdir(MyTooling); ad = false)   # no AD CI/harness/flags
+```
+
+**Standard README badges** are managed too. The README body stays package-owned,
+but a block between `<!-- badges:start -->` / `<!-- badges:end -->` markers holds
+the standard badge set (docs stable + dev, Test CI, codecov, SciML style, Aqua,
+JET, License — plus per-backend AD CI and coverage badges when `ad = true`),
+parameterised from `{{REPO}}` / `{{PACKAGE}}` so no owner or repo is hardcoded.
+`scaffold`/`generate` write the markers and initial badges; `update` injects the
+block when the markers are absent and re-renders it from the current placeholders
+when present. Nothing outside the markers is touched, so a package gets and keeps
+the standard badges automatically.
 
 Each template is **managed** (standard infra, overwritten on `update` to remove
 drift) or **package-owned** (a starting skeleton written once and never
@@ -96,31 +128,38 @@ overwritten). `{{PACKAGE}}` placeholders are filled from the target
 
 Managed (overwritten on `scaffold`/`update`):
 
-- Root dev config: `Taskfile.yml` (test, lint, format, docs, benchmark, AD
-  targets), `.pre-commit-config.yaml` (JuliaFormatter + detect-secrets + file
-  hygiene), `.JuliaFormatter.toml` (SciML), `.secrets.baseline` (the
-  detect-secrets baseline the pre-commit config references), `codecov.yml` (the
-  `unit` + per-backend `ad-*` coverage flags), and `LICENSE`.
+- Root dev config: `Taskfile.yml` (test, lint, format, docs, benchmark, and —
+  when `ad = true` — AD targets), `.pre-commit-config.yaml` (JuliaFormatter +
+  detect-secrets + file hygiene), `.JuliaFormatter.toml` (SciML),
+  `.gitattributes` (normalise line endings to LF so the formatter check is
+  stable on Windows runners), `.secrets.baseline` (the detect-secrets baseline
+  the pre-commit config references), and `codecov.yml` (the `unit` flag, plus
+  per-backend `ad-*` flags when `ad = true`).
 - CI: `.github/workflows/*` thin callers that invoke the
   [EpiAware/.github](https://github.com/EpiAware/.github) reusables (tests,
-  downgrade-compat, the per-backend AD matrix, docs, doc-preview-cleanup,
-  format/pre-commit, coverage, opt-in downstream/reverse-deps, TagBot) and
-  `.github/dependabot.yml`.
+  downgrade-compat, docs, doc-preview-cleanup, format/pre-commit, coverage,
+  opt-in downstream/reverse-deps, TagBot) and `.github/dependabot.yml`. The
+  per-backend AD matrix caller (`ad.yaml`) is added only when `ad = true`.
 - Test infra: `test/package/quality.jl` (the QA testset that calls the helpers),
   `test/jet/runtests.jl` + `test/jet/Project.toml`, `test/formatter/runtests.jl`
-  + `test/formatter/Project.toml`, `test/ad/setup.jl` and `test/ad/runtests.jl`
-  (the AD-harness wiring), and `benchmark/run.jl` / `benchmark/compare.jl` (the
-  benchmark wiring using `Benchmarks`).
+  + `test/formatter/Project.toml`, and `benchmark/run.jl` / `benchmark/compare.jl`
+  (the benchmark wiring using `Benchmarks`). When `ad = true`, the AD-harness
+  wiring (`test/ad/setup.jl`, `test/ad/runtests.jl`) is managed too.
 
 Package-owned (written once, never overwritten — `force = true` overrides):
 
 - `test/runtests.jl` — the main test entry (pulls in the QA testset alongside
   the package's own unit tests).
-- `test/Project.toml` — the test environment (seeded with the QA/AD deps).
+- `test/Project.toml` — the test environment (seeded with the QA deps, plus the
+  AD harness deps when `ad = true`).
 - `test/package/qa_config.jl` — the QA config **values** the managed testset
   reads (the package's `ignore` lists, extension names, broken-quarantines).
-- `test/ad/scenarios.jl` + `test/ad/Project.toml`, and an `ADFixtures` registry
-  skeleton (`test/ADFixtures/`) implementing the `ADRegistry` contract.
+- `LICENSE` — the `license`-selected licence text (an SPDX id, one of `MIT`,
+  `Apache-2.0`; default `MIT`), written once with the holder/year filled.
+  `update` never rewrites it, so a deliberately changed licence is not reverted.
+- When `ad = true`: `test/ad/scenarios.jl` + `test/ad/Project.toml`, and an
+  `ADFixtures` registry skeleton (`test/ADFixtures/`) implementing the
+  `ADRegistry` contract.
 - `benchmark/benchmarks.jl` — the package's `SUITE`.
 
 A package's own unit tests, AD scenarios, registry, and config values therefore

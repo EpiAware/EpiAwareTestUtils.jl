@@ -1,0 +1,45 @@
+name: Self-drift
+
+# Dogfooding guard: the kit manages its OWN repo with its own tooling. This
+# re-applies the managed standard files to the kit (`update(".", ad = false)` —
+# the kit is a tooling package with no differentiable code, so it opts out of
+# the AD infra) and fails if the working tree changed. A non-empty diff means
+# the committed infra has drifted from the bundled templates, so the kit no
+# longer keeps itself to the standard it ships.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  self-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v2
+      - name: Re-apply the managed standard to the kit itself
+        run: julia --project=. -e '
+          using Pkg; Pkg.instantiate();
+          using EpiAwarePackageTools;
+          res = update("."; ad = false);
+          println("re-applied ", length(res.updated), " managed files");'
+      - name: Fail on any drift from the bundled templates
+        # `update` never rewrites LICENSE (it is package-owned, write-once), so
+        # it cannot drift here; the explicit exclude keeps that guarantee clear.
+        run: |
+          if ! git diff --quiet -- . ':!LICENSE'; then
+            echo "::error::The kit has drifted from its own managed templates."
+            echo "Run julia -e 'using EpiAwarePackageTools; update(\".\"; ad=false)' and commit."
+            git --no-pager diff -- . ':!LICENSE'
+            exit 1
+          fi
+          echo "No drift: the kit is in sync with the standard it ships."

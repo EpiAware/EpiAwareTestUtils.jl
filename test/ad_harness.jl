@@ -3,7 +3,9 @@
 # the harness logic (working/partial backends, broken bookkeeping) without
 # pulling in any package-specific distributions.
 
-@testset "AD harness" begin
+@testitem "AD harness" begin
+    using Test
+    using EpiAwarePackageTools
     using ADTypes: AutoForwardDiff, AutoReverseDiff
     using DifferentiationInterface: DifferentiationInterface, Constant
     import DifferentiationInterfaceTest as DIT
