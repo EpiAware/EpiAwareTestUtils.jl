@@ -5,6 +5,7 @@
 # allowed cross-references) are caller-supplied arguments, never baked in.
 
 using Test: @testset, @test, @test_skip, @test_broken, detect_ambiguities
+using Markdown: Markdown
 
 """
     test_doctest(mod)
@@ -40,9 +41,19 @@ The test passes when every directory is already formatted. JuliaFormatter must
 be a dependency of the calling environment; to keep its `JuliaSyntax` pin from
 clashing with JET, run this from an isolated formatter environment (see the
 `templates/Taskfile.yml` `test-formatting` target).
+
+Pass `env` (the path to an isolated formatter project directory holding
+JuliaFormatter) to run the check in a subprocess via that project's
+`runtests.jl`, exactly as [`test_jet`](@ref) isolates JET. The test then passes
+when the subprocess exits zero, and JuliaFormatter need not be a dependency of
+the calling environment — the recommended layout when the test items share an
+environment with JET. `style`/`verbose`/`dirs` are ignored in `env` mode (the
+isolated `runtests.jl` owns that configuration).
 """
 function test_formatting(dirs; style::AbstractString = "sciml",
-        verbose::Bool = true)
+        verbose::Bool = true,
+        env::Union{Nothing, AbstractString} = nothing)
+    env === nothing || return _test_formatting_env(env)
     # See `test_aqua` for why this goes through `invokelatest`.
     JF = Base.require(Base.PkgId(
         Base.UUID("98e50ef6-434e-11e9-1051-2b60c6c9e899"), "JuliaFormatter"))
@@ -58,6 +69,28 @@ function test_formatting(dirs; style::AbstractString = "sciml",
             end
             @test all_ok
         end
+    end
+end
+
+# Run the formatter check in an isolated subprocess (cf. `test_jet`'s `env`
+# path): instantiate `env`, then run its `runtests.jl` and assert a zero exit.
+function _test_formatting_env(env::AbstractString)
+    Pkg = Base.require(Base.PkgId(
+        Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg"))
+    isdir(env) && isfile(joinpath(env, "Project.toml")) ||
+        error("formatter env $env has no Project.toml")
+    runner = joinpath(env, "runtests.jl")
+    isfile(runner) || error("formatter env $env has no runtests.jl")
+    current = Base.active_project()
+    Pkg.activate(env)
+    Pkg.instantiate()
+    Pkg.activate(current)
+    return @testset "formatting" begin
+        result = run(
+            pipeline(`$(Base.julia_cmd()) --project=$env $runner`,
+                stdout = stdout, stderr = stderr);
+            wait = true)
+        @test result.exitcode == 0
     end
 end
 
@@ -94,6 +127,31 @@ test_linting(mod::Module; kwargs...) = test_jet(mod; kwargs...)
 
 # --- docstring format -------------------------------------------------------
 
+# Render one `DocStr`'s text vector to a string, keeping only the authored
+# prose. A `DocStr.text` is a vector of interpolated pieces; with
+# `DocStringExtensions.@template` registered, the package's `@template`
+# directive wraps each docstring as `[Template{:before}, "<prose>",
+# Template{:after}]`, so the prose is an interior `AbstractString`, not the
+# last element. Keep the `AbstractString` / `Markdown.MD` pieces and drop the
+# `Template` directives, so a templated package is read the same as a plain
+# one. (The previous `text[end]` returned the appended `Template` object.)
+function _docstr_text(docstr)
+    text = try
+        docstr.text
+    catch
+        return string(docstr)
+    end
+    pieces = String[]
+    for t in text
+        if t isa AbstractString || t isa Markdown.MD
+            push!(pieces, string(t))
+        end
+    end
+    # No authored prose survived the filter (e.g. a bare `@template`): fall
+    # back to stringifying the whole `DocStr` rather than dropping it.
+    return isempty(pieces) ? string(docstr) : join(pieces, "\n")
+end
+
 # Resolve a binding's docstring to a single string, collapsing the `MultiDoc`
 # case (one entry per documented signature) into one block. Returns an empty
 # string when nothing is documented, so callers test `isempty`.
@@ -106,11 +164,11 @@ function _docstring_content(mod::Module, name::Symbol)
         if doc_obj isa Base.Docs.MultiDoc
             blocks = String[]
             for (_, docstr) in doc_obj.docs
-                push!(blocks, string(docstr.text[end]))
+                push!(blocks, _docstr_text(docstr))
             end
             return join(blocks, "\n\n")
         else
-            return string(doc_obj)
+            return _docstr_text(doc_obj)
         end
     catch
         return ""

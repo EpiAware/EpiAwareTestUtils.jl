@@ -85,6 +85,10 @@ run_it(a, b; opt = 1) = a + b + opt
 
 end # module _NonConforming
 
+# Sentinel standing in for a `DocStringExtensions.Template` directive in a
+# `DocStr.text` vector (see the `_docstring_content` template test).
+struct _TemplateDirective end
+
 @testset "QA helpers" begin
     @testset "test_docstring_format passes a conforming module" begin
         test_docstring_format(_Conforming)
@@ -96,6 +100,22 @@ end # module _NonConforming
         @test check_flags(() -> test_docstring_format(_NonConforming))
     end
 
+    @testset "_docstring_content skips @template directives" begin
+        # `DocStringExtensions.@template` wraps each docstring's text vector as
+        # `[directive, "<prose>", directive]`, so the authored prose is an
+        # interior element, not the last one. The reader must return the prose,
+        # not a stringified directive. `_TemplateDirective` (defined at top
+        # level below) stands in for a `Template` directive.
+        ds = Base.Docs.DocStr(
+            Core.svec(
+                _TemplateDirective(), "the real prose here",
+                _TemplateDirective()),
+            nothing, Dict{Symbol, Any}())
+        @test EpiAwarePackageTools._docstr_text(ds) == "the real prose here"
+        @test !occursin("_TemplateDirective",
+            EpiAwarePackageTools._docstr_text(ds))
+    end
+
     @testset "test_formatting over self" begin
         # Check the package src tree is JuliaFormatter-clean.
         root = dirname(dirname(pathof(EpiAwarePackageTools)))
@@ -105,6 +125,18 @@ end # module _NonConforming
     @testset "test_formatting skips missing dirs" begin
         res = test_formatting([joinpath(tempdir(), "does-not-exist-xyz")])
         @test res isa Test.AbstractTestSet
+    end
+
+    @testset "test_formatting env mode runs a subprocess runner" begin
+        # An isolated formatter env whose runner exits zero passes; a missing
+        # Project.toml / runtests.jl errors (cf. `test_jet`'s env path).
+        dir = mktempdir()
+        @test_throws ErrorException test_formatting([]; env = dir)
+        write(joinpath(dir, "Project.toml"), "")
+        @test_throws ErrorException test_formatting([]; env = dir)
+        write(joinpath(dir, "runtests.jl"), "exit(0)")
+        ts = test_formatting([]; env = dir)
+        @test ts isa Test.AbstractTestSet
     end
 
     @testset "test_doctest runs over self" begin
