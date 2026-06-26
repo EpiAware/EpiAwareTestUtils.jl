@@ -161,6 +161,7 @@ function _find_results(dir::AbstractString, pkg::AbstractString,
         tag = match(r"@(.+)\.json$", basename(f))
         tag === nothing && continue
         t = tag.captures[1]
+        t === nothing && continue
         if startswith(rev, t) || startswith(t, rev) || rev == t
             return f
         end

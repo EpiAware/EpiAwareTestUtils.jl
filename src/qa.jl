@@ -108,7 +108,9 @@ function _formatter_style(JF, style::AbstractString)
 end
 
 function test_formatting(mod::Module; kwargs...)
-    root = dirname(dirname(pathof(mod)))
+    src = pathof(mod)
+    src === nothing && error("module $(nameof(mod)) has no source path")
+    root = dirname(dirname(src))
     dirs = [joinpath(root, d) for d in ("src", "test", "docs", "benchmark")]
     return test_formatting(dirs; kwargs...)
 end
@@ -221,10 +223,14 @@ For each documented symbol with a meaningful docstring the checks are:
   - structs document each field name somewhere in the docstring (when
     `require_field_docs`);
   - functions with positional arguments include an `# Arguments` section, and
-    functions with keyword arguments include a `# Keyword Arguments` section;
+    functions with keyword arguments include a `# Keyword Arguments` section
+    (both skipped when `require_arg_sections = false`, for a package whose API
+    docs are reference-style rather than sectioned);
   - exported (and public) functions include an `@example` block (skipped when
     `exported_only_examples` is `false`, which requires examples of every
-    function instead);
+    function instead; set `require_examples = false` to drop the `@example`
+    requirement entirely, e.g. for a tooling package whose helpers need external
+    fixtures to exemplify);
   - the docstring carries either a `TYPEDSIGNATURES` directive or the symbol's
     own name (i.e. a signature is shown);
   - `[`name`](@ref)` cross-references resolve to another exported/public symbol;
@@ -236,7 +242,8 @@ Symbols without a docstring are skipped here (leave existence to Aqua's
 matching the original package-level check.
 """
 function test_docstring_format(mod::Module; exported_only_examples::Bool = true,
-        require_field_docs::Bool = true, crossref_ignore::Tuple = ())
+        require_field_docs::Bool = true, require_arg_sections::Bool = true,
+        require_examples::Bool = true, crossref_ignore::Tuple = ())
     syms = names(mod)
     types = [s for s in syms if _is_type(mod, s)]
     funcs = [s for s in syms if !_is_type(mod, s)]
@@ -249,7 +256,8 @@ function test_docstring_format(mod::Module; exported_only_examples::Bool = true,
         end
         @testset "functions" begin
             for name in funcs
-                _check_func_docstring(mod, name; exported_only_examples)
+                _check_func_docstring(mod, name; exported_only_examples,
+                    require_arg_sections, require_examples)
             end
         end
         @testset "cross-references" begin
@@ -293,7 +301,8 @@ function _check_type_docstring(mod, name; require_field_docs)
     end
 end
 
-function _check_func_docstring(mod, name; exported_only_examples)
+function _check_func_docstring(mod, name; exported_only_examples,
+        require_arg_sections, require_examples)
     @testset "$name" begin
         obj = try
             getfield(mod, name)
@@ -307,9 +316,11 @@ function _check_func_docstring(mod, name; exported_only_examples)
             return
         end
         args, has_kwargs = _method_args(obj)
-        !isempty(args) && @test occursin("# Arguments", doc)
-        has_kwargs && @test occursin("# Keyword Arguments", doc)
-        if !exported_only_examples || name in names(mod)
+        if require_arg_sections
+            !isempty(args) && @test occursin("# Arguments", doc)
+            has_kwargs && @test occursin("# Keyword Arguments", doc)
+        end
+        if require_examples && (!exported_only_examples || name in names(mod))
             @test occursin("@example", doc)
         end
         @test occursin("TYPEDSIGNATURES", doc) || occursin(string(name), doc)

@@ -20,6 +20,7 @@ test_linting
 ```@docs
 scaffold
 update
+generate
 scaffold_inputs
 ```
 

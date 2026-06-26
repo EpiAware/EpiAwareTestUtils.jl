@@ -3,31 +3,31 @@
 
 version: 2
 updates:
-  # Enable version updates for GitHub Actions
+  # GitHub Actions: keeps the reusable-workflow pins (and any actions) current.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
     reviewers:
-      - "seabbs"
+      - "EpiAware"
     assignees:
-      - "seabbs"
+      - "EpiAware"
     commit-message:
       prefix: "ci"
       include: "scope"
 
-  # Enable version updates for Julia dependencies across the workspace
-  # (main package, test/, docs/).
+  # Julia dependencies. Uses the workspace feature (Julia 1.12+) to coordinate
+  # updates across the main package, test/, docs/, and benchmark/ environments.
   - package-ecosystem: "julia"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
     reviewers:
-      - "seabbs"
+      - "EpiAware"
     assignees:
-      - "seabbs"
+      - "EpiAware"
     commit-message:
       prefix: "chore"
       include: "scope"

@@ -3,10 +3,13 @@
 # formatting, comment structure) without running any real benchmarks, so the
 # inputs are hand-built result dicts and a tiny BenchmarkGroup.
 
-@testset "Benchmarks" begin
+@testitem "Benchmarks" begin
+    using Test
+    using EpiAwarePackageTools
     using EpiAwarePackageTools.Benchmarks
     using EpiAwarePackageTools.Benchmarks: flatten_asv, asv_comment,
-                                        compare_comment, run_suite, fmt_time, fmt_ratio
+                                           compare_comment, run_suite, fmt_time,
+                                           fmt_ratio
     using BenchmarkTools
     import JSON3
 

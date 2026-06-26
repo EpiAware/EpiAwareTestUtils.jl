@@ -3,7 +3,7 @@ Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 EpiAwarePackageTools = "7aaea248-0d11-4a0d-a7dc-86da30abb951"
 
 [sources]
-EpiAwarePackageTools = {path = "/tmp/EpiAwarePackageTools.jl"}
+EpiAwarePackageTools = {path = ".."}
 
 [compat]
 Documenter = "1"
