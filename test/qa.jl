@@ -7,46 +7,49 @@
     using Test
     using EpiAwarePackageTools
 
-    # Recursively count the Fail/Error results recorded in a testset tree.
-    function _count_fails(ts)
-        n = 0
-        for r in ts.results
-            if r isa Test.Fail || r isa Test.Error
-                n += 1
-            elseif r isa Test.AbstractTestSet
-                n += _count_fails(r)
-            end
+    # A testset that TALLIES Fail/Error and never throws. The helpers under test
+    # build their own nested `@testset`s; with `CountingTestSet` as the outer set
+    # of `@testset`, every nested set is also a `CountingTestSet`. Each records a
+    # direct `@test` Fail/Error into its own `fails`; on `finish` a nested set
+    # folds its `fails` into its parent (so leaf counts bubble up), and the
+    # OUTERMOST set (no enclosing testset) simply returns itself WITHOUT throwing.
+    # Reading `fails` off the returned outermost set is therefore version-stable:
+    # it does not depend on the `TestSetException` thrown on a top-level finish
+    # (whose behaviour varies, e.g. 1.13-pre) nor leak failures into the
+    # surrounding suite. `description`/`fails` field names match what
+    # `Test.@testset` constructs and passes.
+    mutable struct CountingTestSet <: Test.AbstractTestSet
+        description::String
+        fails::Int
+    end
+    CountingTestSet(desc::String; kwargs...) = CountingTestSet(desc, 0)
+    function Test.record(ts::CountingTestSet, child::CountingTestSet)
+        ts.fails += child.fails
+        return child
+    end
+    function Test.record(ts::CountingTestSet, res::Test.Result)
+        (res isa Test.Fail || res isa Test.Error) && (ts.fails += 1)
+        return res
+    end
+    # Fold this set's tally into the enclosing testset (so leaf counts bubble up
+    # the nesting), or return self when this is the outermost set. Never throws.
+    function Test.finish(ts::CountingTestSet)
+        if Test.get_testset_depth() > 0
+            Test.record(Test.get_testset(), ts)
         end
-        return n
+        return ts
     end
 
     # True when running `f` (a check that internally builds a `@testset`) records
-    # at least one Fail/Error. `f` runs on a fresh `Task` (empty task-local
-    # testset stack) wrapped in an outer `@testset`, whose returned testset tree
-    # we inspect for Fail/Error directly. This avoids both (a) relying on the
-    # `TestSetException` thrown on finish — whose top-level-throw behaviour varies
-    # across Julia releases (e.g. 1.13-pre no longer throws here) — and (b) the
-    # internal stack functions (`push_testset`/`pop_testset`) whose presence also
-    # varies. The `@testset` macro owns the stack push/pop and returns the
-    # testset; running it on a separate task keeps the surrounding suite's stack
-    # untouched. A non-`TestSetException` error still propagates.
+    # at least one Fail/Error. `f` runs under a `CountingTestSet`, which tallies
+    # the check's Fail/Errors and swallows them (never re-recording into the
+    # surrounding suite or throwing). See the type's docstring for why this is
+    # version-stable across Julia releases.
     function check_flags(f)
-        t = Task() do
-            local ts
-            try
-                ts = @testset "check_flags" begin
-                    f()
-                end
-            catch err
-                err isa Test.TestSetException || rethrow()
-                # On releases where the outer @testset throws on finish, the
-                # exception's own tallies confirm the flagged failure.
-                return err.fail + err.error > 0
-            end
-            return _count_fails(ts) > 0
+        ts = @testset CountingTestSet "check_flags" begin
+            f()
         end
-        schedule(t)
-        return fetch(t)
+        return ts.fails > 0
     end
 
     # A synthetic conforming module: its exported symbols follow the docstring
