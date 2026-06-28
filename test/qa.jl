@@ -7,23 +7,43 @@
     using Test
     using EpiAwarePackageTools
 
-    # True when running `f` (a check that internally builds a `@testset`) records at
-    # least one Fail/Error. `f` runs on a fresh `Task`, which starts with an empty
-    # task-local testset stack, so the check's `@testset` is top-level there and
-    # throws a `TestSetException` on finish when it recorded a Fail/Error — which we
-    # read as "the check flagged a problem". Running on a separate task (rather than
-    # popping the stack by hand) avoids the internal stack functions, whose names
-    # differ across Julia releases (e.g. `pop_testset` is absent on 1.13-pre), so it
-    # keeps the surrounding suite's testset stack untouched.
+    # Recursively count the Fail/Error results recorded in a testset tree.
+    function _count_fails(ts)
+        n = 0
+        for r in ts.results
+            if r isa Test.Fail || r isa Test.Error
+                n += 1
+            elseif r isa Test.AbstractTestSet
+                n += _count_fails(r)
+            end
+        end
+        return n
+    end
+
+    # True when running `f` (a check that internally builds a `@testset`) records
+    # at least one Fail/Error. `f` runs on a fresh `Task` (empty task-local
+    # testset stack) wrapped in an outer `@testset`, whose returned testset tree
+    # we inspect for Fail/Error directly. This avoids both (a) relying on the
+    # `TestSetException` thrown on finish — whose top-level-throw behaviour varies
+    # across Julia releases (e.g. 1.13-pre no longer throws here) — and (b) the
+    # internal stack functions (`push_testset`/`pop_testset`) whose presence also
+    # varies. The `@testset` macro owns the stack push/pop and returns the
+    # testset; running it on a separate task keeps the surrounding suite's stack
+    # untouched. A non-`TestSetException` error still propagates.
     function check_flags(f)
         t = Task() do
+            local ts
             try
-                f()
-                false
+                ts = @testset "check_flags" begin
+                    f()
+                end
             catch err
-                err isa Test.TestSetException ? (err.fail + err.error > 0) :
-                rethrow()
+                err isa Test.TestSetException || rethrow()
+                # On releases where the outer @testset throws on finish, the
+                # exception's own tallies confirm the flagged failure.
+                return err.fail + err.error > 0
             end
+            return _count_fails(ts) > 0
         end
         schedule(t)
         return fetch(t)

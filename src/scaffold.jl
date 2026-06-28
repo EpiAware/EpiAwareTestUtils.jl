@@ -510,8 +510,9 @@ function _apply(target_dir::AbstractString; managed_only::Bool, force::Bool,
     pkg = inputs.PACKAGE
     readme_action = :skipped
     if repo !== nothing && pkg !== nothing
-        readme_action, _ = _apply_badges(readme, repo, pkg; ad = ad,
-            license = String(inputs.LICENSE))
+        lic = String(inputs.LICENSE)
+        readme_action = first(
+            _apply_badges(readme, repo, pkg; ad = ad, license = lic))
     end
     # LICENSE is package-owned and write-once: only `scaffold`/`generate`
     # (`managed_only = false`) may write it, and only when absent. `update`
