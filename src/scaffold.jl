@@ -87,6 +87,26 @@ const SCAFFOLD_TEMPLATES = Template[
         ".github/workflows/TagBot.yaml", true, true),
     Template(".github/workflows/downstream.yaml",
         ".github/workflows/downstream.yaml", true, true),
+    # Scheduled template-sync: re-applies the managed standard on a schedule
+    # (and on Dependabot updates) and opens a PR / refreshes the branch when the
+    # committed infra has drifted from the kit. The auto-refresh half of the
+    # dogfooding loop (the `self-drift` check guards it the rest of the time).
+    Template(".github/workflows/template-sync.yaml",
+        ".github/workflows/template-sync.yaml", true, true),
+
+    # --- org issue + PR templates (managed) ---
+    # The shared EpiAware/.github issue forms, contact links, and PR checklist,
+    # so every adopting repo offers the same reporting experience.
+    Template(".github/ISSUE_TEMPLATE/bug_report.md",
+        ".github/ISSUE_TEMPLATE/bug_report.md", true, false),
+    Template(".github/ISSUE_TEMPLATE/feature_request.md",
+        ".github/ISSUE_TEMPLATE/feature_request.md", true, false),
+    Template(".github/ISSUE_TEMPLATE/scientific_improvement.md",
+        ".github/ISSUE_TEMPLATE/scientific_improvement.md", true, false),
+    Template(".github/ISSUE_TEMPLATE/config.yml",
+        ".github/ISSUE_TEMPLATE/config.yml", true, true),
+    Template(".github/PULL_REQUEST_TEMPLATE.md",
+        ".github/PULL_REQUEST_TEMPLATE.md", true, false),
 
     # --- shipped test infrastructure (managed) ---
     Template("test/package/quality.jl",
@@ -122,6 +142,14 @@ const SCAFFOLD_TEMPLATES = Template[
         "docs/src/components/VersionPicker.vue", true, false),
 
     # --- package-owned skeletons (written once, never overwritten) ---
+    # CODEOWNERS names real people/teams, so it is seeded once (commented) for
+    # the package to fill in; a bare org cannot be a code owner.
+    Template(".github/CODEOWNERS", ".github/CODEOWNERS", false, true),
+    # The standard DocStringExtensions `@template` conventions. Package-owned
+    # because it lives in `src/` and must be `include`d by the package module
+    # BEFORE its docstrings are defined for the templates to take effect (see
+    # CensoredDistributions.jl `src/docstrings.jl`).
+    Template("src/docstrings.jl", "src/docstrings.jl", false, false),
     Template("docs/Project.toml", "docs/Project.toml", false, true),
     Template("docs/pages.jl", "docs/pages.jl", false, false),
     Template("test/runtests.jl", "test/runtests.jl", false, false),
@@ -275,11 +303,22 @@ function scaffold_inputs(target_dir::AbstractString;
         "# develop the kit alongside this package.\n",
         KIT_NAME, " = {url = \"https://github.com/", org, "/",
         KIT_NAME, ".jl\", rev = \"main\"}")
+    # How the scheduled template-sync workflow loads the kit before calling
+    # `update(".")`. The kit dogfoods itself, so when the adopting package IS
+    # the kit it syncs from its OWN checked-out project; every other package
+    # pulls the kit's newest `main` into a throwaway env so a sync vendors the
+    # latest standard. Kept here (not in the template) because it depends on the
+    # same `is_kit` split as the JET kit source line.
+    sync_install = is_kit ?
+                   "Pkg.activate(\".\"); Pkg.instantiate()" :
+                   string("Pkg.activate(; temp = true); Pkg.add(url = ",
+        "\"https://github.com/", org, "/", KIT_NAME,
+        ".jl\", rev = \"main\")")
     return (PACKAGE = pkg, UUID = uuid, ADFIXTURES_UUID = adfix_uuid,
         AUTHORS = auth, HOLDER = hold, ORG = org, REPO = rp,
         REVIEWER = rev, YEAR = string(yr), LICENSE = license,
         DOCS_HOST = docs_host, KIT_DEP_LINE = kit_dep,
-        KIT_SOURCE_LINE = kit_source)
+        KIT_SOURCE_LINE = kit_source, SYNC_INSTALL = sync_install)
 end
 
 # Apply placeholder substitution to `content`. A template may use any subset of
@@ -297,12 +336,46 @@ function _substitute(content::AbstractString, inputs::NamedTuple,
     return content
 end
 
-# Copy one template to `to`, substituting placeholders when requested.
+# A reusable-workflow `uses:` line in a managed CI caller, capturing the prefix
+# up to and including the `@`, the workflow filename, and the pinned ref. The
+# EpiAware/.github reusables are pinned by ref (a SHA), which Dependabot bumps in
+# each adopting repo. See `_preserve_reusable_refs`.
+const _REUSABLE_USES = r"(uses:\s*\S+/\.github/\.github/workflows/([^@\s]+)@)(\S+)"
+
+# Keep the destination's existing reusable-workflow refs when re-emitting a
+# managed CI caller. Dependabot owns the EpiAware/.github reusable SHAs in every
+# adopting repo, so a template that hard-pinned one SHA would report drift (and
+# fail self-drift / churn the scheduled sync) every time Dependabot moved the
+# live pin. When the destination already pins a ref for the same reusable
+# workflow, that ref wins and only the rest of the caller body is re-applied
+# from the template; on first adoption (no destination yet) the template's seed
+# ref is used. This makes `update` idempotent against Dependabot's bumps.
+function _preserve_reusable_refs(content::AbstractString, dest::AbstractString)
+    occursin(_REUSABLE_USES, content) || return content
+    isfile(dest) || return content
+    existing = Dict{String, String}()
+    for line in eachline(dest)
+        m = match(_REUSABLE_USES, line)
+        m === nothing || (existing[m.captures[2]] = m.captures[3])
+    end
+    isempty(existing) && return content
+    return replace(content,
+        _REUSABLE_USES => function (s)
+            m = match(_REUSABLE_USES, s)
+            return m.captures[1] * get(existing, m.captures[2], m.captures[3])
+        end)
+end
+
+# Copy one template to `to`, substituting placeholders when requested. Managed
+# CI callers additionally keep any reusable-workflow ref the destination already
+# pins (see `_preserve_reusable_refs`), so a Dependabot bump is never reverted.
 function _emit(from::AbstractString, to::AbstractString, substitute::Bool,
         inputs::NamedTuple)
     mkpath(dirname(to))
     if substitute
-        write(to, _substitute(read(from, String), inputs, from))
+        content = _substitute(read(from, String), inputs, from)
+        content = _preserve_reusable_refs(content, to)
+        write(to, content)
     else
         cp(from, to; force = true)
     end
@@ -481,6 +554,9 @@ end
 function _apply(target_dir::AbstractString; managed_only::Bool, force::Bool,
         ad::Bool, inputs::NamedTuple)
     isdir(target_dir) || error("target_dir $target_dir does not exist")
+    # Expose the AD flag as a substitution value so the scheduled template-sync
+    # workflow re-applies the standard with the same `ad` the package adopted.
+    inputs = merge(inputs, (AD = string(ad),))
     src_dir = _templates_dir()
     created = String[]
     updated = String[]
@@ -646,7 +722,11 @@ function _emit_package_skeleton(target_dir::AbstractString, package::AbstractStr
     authors = $authors_array
     version = "0.1.0"
 
+    [deps]
+    DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
+
     [compat]
+    DocStringExtensions = "0.9"
     julia = "1.10, 1.11, 1.12"
     """)
     write(joinpath(target_dir, "src", "$package.jl"), """
@@ -656,6 +736,10 @@ function _emit_package_skeleton(target_dir::AbstractString, package::AbstractStr
     A fresh EpiAware package. Replace this skeleton with the package's API.
     \"\"\"
     module $package
+
+    # Register the standard EpiAware docstring conventions before any
+    # docstrings are defined (see src/docstrings.jl).
+    include("docstrings.jl")
 
     end # module $package
     """)
