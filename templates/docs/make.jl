@@ -1,14 +1,28 @@
 # MANAGED by EpiAwarePackageTools.scaffold — do not edit by hand.
 #
 # The standard EpiAware documentation build: Documenter + DocumenterVitepress
-# (the org docs standard, as used by CensoredDistributions.jl). It
+# (the org docs standard, reproducing CensoredDistributions.jl generically). It
 #
-#   - generates `src/index.md` from the package README (badge block stripped),
+#   - runs the Literate.jl tutorial pipeline (light tutorials rendered in
+#     process, heavy tutorials each executed in a fresh subprocess) driven by
+#     the package-owned `docs_config.jl`, with fast-build stubs on
+#     `--skip-notebooks`,
+#   - generates `src/index.md` from the package README (badge block + any raw
+#     badge table stripped, ```julia blocks turned into `@example readme`),
+#   - generates `src/release-notes.md` from a project-root `NEWS.md` when one
+#     exists, prefixed with the package-owned release-notes header,
 #   - generates the API reference pages (`lib/public.md`, `lib/internals.md`)
-#     from the module's documented bindings (one `@docs` entry per binding so the
-#     index has one entry per function, not one per method signature), and
-#   - renders the site with `DocumenterVitepress.MarkdownVitepress` and deploys
-#     it with `DocumenterVitepress.deploydocs`.
+#     from the module's documented bindings (one `@docs` entry per binding so
+#     the index has one entry per function, not one per method signature), and
+#   - renders the site with `DocumenterVitepress.MarkdownVitepress` (adding
+#     DocumenterCitations when a `src/refs.bib` exists) and deploys it with
+#     `DocumenterVitepress.deploydocs`.
+#
+# All package-specific data (tutorial lists, link rewrites, linkcheck ignores)
+# lives in the package-owned `docs_config.jl`; this managed file carries none,
+# so it can be re-applied on every `update` without losing package content. An
+# empty config builds a site with no tutorials and degrades gracefully when a
+# package has no `NEWS.md` or `refs.bib`.
 #
 # Build it with `task docs` (or `julia --project=docs docs/make.jl`).
 
@@ -17,13 +31,108 @@ Pkg.instantiate()
 
 using DocumenterVitepress
 using Documenter
+using DocumenterCitations
 using {{PACKAGE}}
 
-include("pages.jl")
+# Check for skip notebooks option
+skip_notebooks = "--skip-notebooks" in ARGS ||
+                 get(ENV, "SKIP_NOTEBOOKS", "false") == "true"
 
-# Generate index.md from README.md, stripping the managed badge block (the
-# markers and everything between them) so the docs landing page mirrors the
-# README prose without the badge table.
+# The docs navigation tree (package-owned).
+include("pages.jl")
+# Package-specific build config: tutorial lists, README/index link rewrites,
+# and linkcheck ignores. Package-owned and never overwritten, so an empty
+# config builds a site with no tutorials.
+include("docs_config.jl")
+
+# --- Literate tutorial pipeline -------------------------------------------
+tutorials_dir = joinpath(@__DIR__, "src", TUTORIALS_SUBDIR)
+has_tutorials = !isempty(LIGHT_TUTORIALS) || !isempty(HEAVY_TUTORIALS)
+
+if !skip_notebooks
+    if has_tutorials
+        using Literate
+
+        # Light tutorials: Literate emits `@example` blocks that Documenter
+        # runs in-process. They are cheap and accumulate no native/memory
+        # state.
+        if !isempty(LIGHT_TUTORIALS)
+            println(
+                "Building light Literate tutorials " *
+                "(this may take several minutes)..."
+            )
+            for file in LIGHT_TUTORIALS
+                Literate.markdown(
+                    joinpath(tutorials_dir, file),
+                    tutorials_dir;
+                    flavor = Literate.DocumenterFlavor(),
+                    mdstrings = true,
+                    credit = false
+                )
+            end
+        end
+
+        # Heavy tutorials: live MCMC fits, multi-backend AD benchmarks, or
+        # plotting. Run each in its own subprocess with `execute = true` so the
+        # captured outputs become static code blocks; Documenter then renders
+        # without re-executing, and no native or memory state accumulates
+        # across tutorials in the long-lived Documenter process.
+        if !isempty(HEAVY_TUTORIALS)
+            # Each heavy subprocess needs more than one thread to sample MCMC
+            # chains with `MCMCThreads()` in parallel. The parent docs process
+            # is usually single-threaded and `Base.julia_cmd()` would
+            # propagate that, so read the requested count from
+            # `JULIA_NUM_THREADS` (default 4) and pass it explicitly.
+            tutorial_threads = get(ENV, "JULIA_NUM_THREADS", "4")
+            println(
+                "Executing heavy Literate tutorials, one per subprocess " *
+                "($(tutorial_threads) threads each)..."
+            )
+            runner = joinpath(@__DIR__, "run_literate_tutorial.jl")
+            jl = Base.julia_cmd()
+            for file in HEAVY_TUTORIALS
+                input = joinpath(tutorials_dir, file)
+                println("  executing $file in a fresh subprocess...")
+                opts = `--threads=$(tutorial_threads) --project=$(@__DIR__)`
+                run(`$jl $opts $runner $input $tutorials_dir`)
+            end
+        end
+        println("Literate tutorial processing complete")
+    end
+else
+    println(
+        "Skipping Literate tutorial processing " *
+        "(--skip-notebooks or SKIP_NOTEBOOKS=true)"
+    )
+    # A fast build skips the heavy Literate + `@example` execution, but the
+    # tutorial pages are still referenced by the nav and linked from other
+    # pages. Write a lightweight stub `.md` for each so the nav resolves and
+    # the rest of the site builds; a full build overwrites these with the
+    # rendered tutorials. Each stub heading preserves the cross-reference `@id`
+    # the full tutorial defines, so `@ref`s from other pages still resolve.
+    if !isempty(TUTORIAL_STUBS)
+        mkpath(tutorials_dir)
+        for (file, heading) in TUTORIAL_STUBS
+            open(joinpath(tutorials_dir, file), "w") do io
+                println(io, heading)
+                println(io)
+                println(io,
+                    "_This tutorial is omitted from the fast documentation " *
+                    "build. Build the full documentation (`task docs`) to " *
+                    "render it._")
+            end
+        end
+        println("Wrote fast-build tutorial stubs")
+    end
+end
+
+# --- README -> index.md ----------------------------------------------------
+# Strip the managed badge block (the markers and everything between them) and
+# any raw markdown badge table rows / a leading `**Websites**` line, turn
+# ```julia blocks into runnable `@example readme` blocks, drop an inline logo
+# from the title, and apply package-specific link rewrites from `INDEX_REWRITES`
+# (e.g. absolute doc URLs to in-site `@ref`s) so links stay within the built
+# version.
 let readme = joinpath(dirname(@__DIR__), "README.md"),
     index = joinpath(@__DIR__, "src", "index.md")
 
@@ -44,17 +153,56 @@ let readme = joinpath(dirname(@__DIR__), "README.md"),
                 continue
             end
             in_badges && continue
-            # README ```julia blocks are rendered as highlighted (non-executed)
-            # code. A README block that should be EXECUTED on the docs home page
-            # is written as ```@example readme directly in the README; it carries
-            # through unchanged. This keeps an illustrative README (with
-            # placeholder names) from failing the docs build, while still
-            # supporting runnable home-page examples when wanted.
-            println(io, line)
+            if startswith(line, "```julia")
+                println(io, "```@example readme")
+            elseif occursin("docs/src/assets/logo.svg", line)
+                println(io, replace(line,
+                    r"\s*<img[^>]*docs/src/assets/logo\.svg[^>]*>" => ""))
+            elseif startswith(line, "|")  # raw badge / info table rows
+                continue
+            elseif startswith(line, "**Websites**")
+                continue
+            else
+                for (from, to) in INDEX_REWRITES
+                    line = replace(line, from => to)
+                end
+                println(io, line)
+            end
         end
     end
     println("Generated index.md from README.md")
 end
+
+# --- release-notes.md ------------------------------------------------------
+# Combine the package-owned release-notes header with a project-root NEWS.md.
+# Both are optional: a package without a NEWS.md (or the header file) simply
+# gets no release-notes page.
+news_src = joinpath(dirname(@__DIR__), "NEWS.md")
+header_src = joinpath(@__DIR__, "release_notes_header.jl")
+if isfile(news_src) && isfile(header_src)
+    include(header_src)
+    release_notes_dest = joinpath(@__DIR__, "src", "release-notes.md")
+    open(release_notes_dest, "w") do io
+        print(io, RELEASE_NOTES_HEADER)
+        for line in eachline(news_src)
+            println(io, line)
+        end
+    end
+    println("Generated release-notes.md from header + NEWS.md")
+else
+    println("No NEWS.md / release-notes header found; skipping release notes")
+end
+
+# --- API reference pages ---------------------------------------------------
+# Generate the API reference pages (lib/public.md, lib/internals.md) from the
+# module's documented bindings. `@autodocs` splices ONE docstring block per
+# documented method SIGNATURE, so a function with several `@doc`-annotated
+# methods appears many times in both the rendered API and the `@index`.
+# Instead, each binding is listed ONCE in a `@docs` block: Documenter then
+# combines all of a binding's method docstrings under a single heading with a
+# single `@index` entry, while still showing every docstring. The binding list
+# is derived from the module at build time, so it composes with whatever names
+# happen to be exported.
 
 # Whether `sym` is part of `mod`'s public API, matching how Documenter's
 # `@autodocs` partitions `Public`/`Private` (`Base.ispublic` on >= 1.11, else
@@ -83,7 +231,8 @@ function api_bindings(mod::Module)
     return public, private
 end
 
-function write_api_page(path, title, anchor, page, intro, api_heading, mod, names)
+function write_api_page(path, title, anchor, page, intro, api_heading,
+        mod, names)
     mkpath(dirname(path))
     open(path, "w") do io
         if anchor === nothing
@@ -139,9 +288,22 @@ end
 DocMeta.setdocmeta!({{PACKAGE}}, :DocTestSetup,
     :(using {{PACKAGE}}); recursive = true)
 
+# --- citations -------------------------------------------------------------
+# Wire DocumenterCitations only when the package ships a bibliography, so a
+# package with no `src/refs.bib` builds without citations.
+bib_path = joinpath(@__DIR__, "src", "refs.bib")
+plugins = if isfile(bib_path)
+    [CitationBibliography(bib_path; style = :numeric)]
+else
+    Documenter.Plugin[]
+end
+
 makedocs(; sitename = "{{PACKAGE}}.jl",
     authors = "{{AUTHORS}}",
-    clean = true, doctest = false,
+    # A fast build skips the network linkcheck (rate-limited, irrelevant to a
+    # local content build); a full build keeps it strict.
+    clean = true, doctest = false, linkcheck = !skip_notebooks,
+    linkcheck_ignore = LINKCHECK_IGNORE,
     warnonly = [
         :docs_block, :missing_docs, :autodocs_block, :cross_references
     ],
@@ -162,8 +324,27 @@ makedocs(; sitename = "{{PACKAGE}}.jl",
         # Pages custom domain + a DNS record for that host.
         deploy_url = {{DOCS_DEPLOY_URL}},
         keep = :patch
-    )
+    ),
+    plugins = plugins
 )
+
+# Copy every tutorial data directory into the matching build output dir so the
+# bundled data ships with the rendered site (and `@example` blocks that read it
+# resolve at view time). Runs after `makedocs` so `clean = true` does not wipe
+# it; generic over any tutorial that carries a `data` or `<name>-data` dir.
+let src_root = joinpath(@__DIR__, "src"), build_root = joinpath(@__DIR__, "build")
+    for (root, dirs, _) in walkdir(src_root)
+        for d in dirs
+            (d == "data" || endswith(d, "-data")) || continue
+            src_data = joinpath(root, d)
+            rel = relpath(src_data, src_root)
+            dest_data = joinpath(build_root, rel)
+            mkpath(dirname(dest_data))
+            cp(src_data, dest_data; force = true)
+            println("Copied tutorial data: $rel")
+        end
+    end
+end
 
 DocumenterVitepress.deploydocs(
     repo = "github.com/{{REPO}}",
