@@ -594,5 +594,87 @@
                     read(joinpath(dir, "LICENSE"), String))
             end
         end
+
+        @testset "update preserves a Dependabot-bumped reusable ref" begin
+            mktempdir() do dir
+                _fake_pkg(dir; name = "Wombat")
+                scaffold(dir)
+                caller = joinpath(dir, ".github/workflows/test.yaml")
+                # Simulate Dependabot bumping the reusable SHA in the live
+                # caller (the case that used to fail self-drift).
+                bumped = replace(read(caller, String),
+                    r"(tests\.yml@)\S+" =>
+                        s"\1deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+                write(caller, bumped)
+                update(dir)
+                after = read(caller, String)
+                # update keeps the bumped ref (never reverts Dependabot) ...
+                @test occursin(
+                    "tests.yml@deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", after)
+                # ... the rest of the caller is still re-applied managed, and a
+                # second update is idempotent on the preserved ref.
+                update(dir)
+                @test read(caller, String) == after
+            end
+        end
+
+        @testset "org issue/PR templates + scheduled sync are managed" begin
+            mktempdir() do dir
+                _fake_pkg(dir; name = "Wombat")
+                scaffold(dir; ad = false)
+                for f in (".github/workflows/template-sync.yaml",
+                    ".github/ISSUE_TEMPLATE/bug_report.md",
+                    ".github/ISSUE_TEMPLATE/feature_request.md",
+                    ".github/ISSUE_TEMPLATE/scientific_improvement.md",
+                    ".github/ISSUE_TEMPLATE/config.yml",
+                    ".github/PULL_REQUEST_TEMPLATE.md")
+                    @test isfile(joinpath(dir, f))
+                end
+                # The sync workflow re-applies the standard with the package's
+                # own `ad` value and is fully substituted.
+                sync = read(
+                    joinpath(dir, ".github/workflows/template-sync.yaml"),
+                    String)
+                @test occursin("update(\".\"; ad = false)", sync)
+                # The kit placeholders are resolved (GitHub Actions `${{ }}`
+                # expressions legitimately remain).
+                @test !occursin("{{AD}}", sync)
+                @test !occursin("{{SYNC_INSTALL}}", sync)
+                # config.yml points its security link at the package repo.
+                cfg = read(joinpath(dir, ".github/ISSUE_TEMPLATE/config.yml"),
+                    String)
+                @test occursin("EpiAware/Wombat.jl", cfg)
+                @test !occursin("{{", cfg)
+                # They are managed: an update re-applies them.
+                res = update(dir; ad = false)
+                @test joinpath(dir, ".github/workflows/template-sync.yaml") in
+                      res.updated
+            end
+        end
+
+        @testset "docstrings template shipped + wired by generate" begin
+            mktempdir() do dir
+                _fake_pkg(dir; name = "Wombat")
+                scaffold(dir; ad = false)
+                # The @template conventions ship as a package-owned src file.
+                ds = joinpath(dir, "src/docstrings.jl")
+                @test isfile(ds)
+                txt = read(ds, String)
+                @test occursin("@template", txt)
+                @test occursin("TYPEDSIGNATURES", txt)
+                # CODEOWNERS is seeded (package-owned, commented placeholder).
+                @test isfile(joinpath(dir, ".github/CODEOWNERS"))
+            end
+            mktempdir() do base
+                dir = joinpath(base, "FreshPkg")
+                generate(dir, "FreshPkg"; authors = ["Ada"], ad = false)
+                # generate wires the dep + include automatically.
+                proj = read(joinpath(dir, "Project.toml"), String)
+                @test occursin("DocStringExtensions", proj)
+                mod = read(joinpath(dir, "src/FreshPkg.jl"), String)
+                @test occursin("include(\"docstrings.jl\")", mod)
+                @test isfile(joinpath(dir, "src/docstrings.jl"))
+            end
+        end
     end # @testset "scaffold + update"
 end # @testitem "scaffold + update (logic)"
