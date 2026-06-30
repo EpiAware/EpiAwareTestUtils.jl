@@ -72,6 +72,46 @@
                     test_yaml)
                 @test occursin("downgrade.yml", test_yaml)
                 @test !occursin("{{ORG}}", test_yaml)
+
+                # Every managed workflow + dependabot + CODEOWNERS self-identifies
+                # with the managed-by header so an adopter never edits it by hand.
+                hdr = "MANAGED by EpiAwarePackageTools.scaffold"
+                for f in (".github/workflows/test.yaml",
+                    ".github/workflows/ad.yaml",
+                    ".github/workflows/document.yaml",
+                    ".github/workflows/codecoverage.yaml",
+                    ".github/workflows/downstream.yaml",
+                    ".github/workflows/pre-commit.yaml",
+                    ".github/workflows/TagBot.yaml",
+                    ".github/workflows/docpreviewcleanup.yaml",
+                    ".github/workflows/cancel-on-close.yaml",
+                    ".github/workflows/try-this-pr.yaml",
+                    ".github/workflows/claude.yml",
+                    ".github/workflows/claude-code-review.yml",
+                    ".github/dependabot.yml", ".github/CODEOWNERS",
+                    "codecov.yml", ".pre-commit-config.yaml",
+                    ".JuliaFormatter.toml")
+                    @test occursin(hdr,
+                        read(joinpath(dir, f), String))
+                end
+                # The org-standard bot/dev-experience callers are managed and
+                # parameterised (no repo-specific literal left hardcoded).
+                tpr = read(joinpath(dir, ".github/workflows/try-this-pr.yaml"),
+                    String)
+                @test occursin("github.com/EpiAware/FakePkg.jl", tpr)
+                @test occursin("using FakePkg", tpr)
+                # No kit placeholder remains (GitHub `${{ }}` expressions stay).
+                @test !occursin(r"\{\{[A-Z_]+\}\}", tpr)
+                coc = read(joinpath(dir, ".github/workflows/cancel-on-close.yaml"),
+                    String)
+                @test occursin(
+                    "EpiAware/.github/.github/workflows/cancel-on-close.yml", coc)
+                # Coverage hard-fails on upload error (org policy: red on a
+                # missing CODECOV_TOKEN as a loud reminder to add it).
+                cov_caller = read(
+                    joinpath(dir, ".github/workflows/codecoverage.yaml"), String)
+                @test occursin("fail_ci_if_error: true", cov_caller)
+                @test !occursin("fail_ci_if_error: false", cov_caller)
             end
         end
 
@@ -324,14 +364,39 @@
                 @test !occursin("{{HOLDER}}", lic)
                 @test !occursin("{{YEAR}}", lic)
 
-                # Dependabot sets NO reviewers/assignees: GitHub cannot assign an
-                # org (or any bare placeholder) as a reviewer, so the template
-                # omits them entirely (and never hardcodes a person).
+                # With no `reviewer` handle, Dependabot sets NO reviewers and
+                # CODEOWNERS ships a commented placeholder: GitHub cannot assign
+                # a bare org, so a person is never hardcoded.
                 dep = read(joinpath(dir, ".github/dependabot.yml"), String)
                 @test !occursin("reviewers:", dep)
                 @test !occursin("assignees:", dep)
                 @test !occursin("{{REVIEWER}}", dep)
+                @test !occursin("{{DEPENDABOT_REVIEWERS}}", dep)
                 @test !occursin("seabbs", dep)
+                co = read(joinpath(dir, ".github/CODEOWNERS"), String)
+                @test !occursin(r"^\* @", co)  # no active owner line
+                @test !occursin("{{CODEOWNERS_LINE}}", co)
+            end
+            # With a `reviewer` handle the same input drives CODEOWNERS, the
+            # Dependabot reviewers, the version assignee, and the Claude gate.
+            mktempdir() do dir
+                _fake_pkg(dir; name = "Wombat")
+                scaffold(dir; reviewer = "octocat")
+                co = read(joinpath(dir, ".github/CODEOWNERS"), String)
+                @test occursin("* @octocat", co)
+                @test !occursin("{{", co)
+                dep = read(joinpath(dir, ".github/dependabot.yml"), String)
+                @test occursin("reviewers:", dep)
+                @test occursin("- \"octocat\"", dep)
+                @test !occursin("{{", dep)
+                claude = read(joinpath(dir, ".github/workflows/claude.yml"),
+                    String)
+                @test occursin("github.actor == 'octocat'", claude)
+                @test !occursin("{{REVIEWER}}", claude)
+                review = read(
+                    joinpath(dir, ".github/workflows/claude-code-review.yml"),
+                    String)
+                @test occursin("user.login == 'octocat'", review)
             end
         end
 
@@ -885,8 +950,12 @@
                 txt = read(ds, String)
                 @test occursin("@template", txt)
                 @test occursin("TYPEDSIGNATURES", txt)
-                # CODEOWNERS is seeded (package-owned, commented placeholder).
-                @test isfile(joinpath(dir, ".github/CODEOWNERS"))
+                # CODEOWNERS is managed; with no reviewer handle it ships a
+                # commented placeholder (a bare org is never a code owner).
+                co = read(joinpath(dir, ".github/CODEOWNERS"), String)
+                @test occursin("MANAGED by EpiAwarePackageTools", co)
+                @test occursin("# * @", co)
+                @test !occursin("{{", co)
             end
             mktempdir() do base
                 dir = joinpath(base, "FreshPkg")

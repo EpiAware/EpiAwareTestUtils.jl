@@ -70,6 +70,11 @@ const SCAFFOLD_TEMPLATES = Template[
 
     # --- CI caller workflows + dependabot (managed) ---
     Template(".github/dependabot.yml", ".github/dependabot.yml", true, true),
+    # CODEOWNERS is managed and parameterised by the `reviewer` handle
+    # (`* @{{REVIEWER}}`). GitHub serves no org-default CODEOWNERS, so it is
+    # repo-specific, but the content is fully derived from the handle so it is
+    # re-applied like any other managed file.
+    Template(".github/CODEOWNERS", ".github/CODEOWNERS", true, true),
     Template(".github/workflows/test.yaml",
         ".github/workflows/test.yaml", true, true),
     # The AD CI caller is opt-in: only scaffolded when `ad = true`.
@@ -87,6 +92,21 @@ const SCAFFOLD_TEMPLATES = Template[
         ".github/workflows/TagBot.yaml", true, true),
     Template(".github/workflows/downstream.yaml",
         ".github/workflows/downstream.yaml", true, true),
+    # Cancel a PR's in-flight runs on close/merge (thin caller of the
+    # EpiAware/.github reusable), freeing runners that concurrency groups miss.
+    Template(".github/workflows/cancel-on-close.yaml",
+        ".github/workflows/cancel-on-close.yaml", true, true),
+    # The generic org "Try this PR!" helper: comments install instructions for
+    # the PR branch. Parameterised by repo slug + package name.
+    Template(".github/workflows/try-this-pr.yaml",
+        ".github/workflows/try-this-pr.yaml", true, true),
+    # The Claude Code review bot integration (org-standard; the OAuth token is a
+    # per-repo secret). Gated on the `reviewer` handle so only that user's
+    # comments/PRs trigger it.
+    Template(".github/workflows/claude.yml",
+        ".github/workflows/claude.yml", true, true),
+    Template(".github/workflows/claude-code-review.yml",
+        ".github/workflows/claude-code-review.yml", true, true),
     # Scheduled template-sync: re-applies the managed standard on a schedule
     # (and on Dependabot updates) and opens a PR / refreshes the branch when the
     # committed infra has drifted from the kit. The auto-refresh half of the
@@ -166,9 +186,6 @@ const SCAFFOLD_TEMPLATES = Template[
         "docs/src/components/VersionPicker.vue", true, false),
 
     # --- package-owned skeletons (written once, never overwritten) ---
-    # CODEOWNERS names real people/teams, so it is seeded once (commented) for
-    # the package to fill in; a bare org cannot be a code owner.
-    Template(".github/CODEOWNERS", ".github/CODEOWNERS", false, true),
     # The standard DocStringExtensions `@template` conventions. Package-owned
     # because it lives in `src/` and must be `include`d by the package module
     # BEFORE its docstrings are defined for the templates to take effect (see
@@ -299,8 +316,13 @@ into a template:
   - `holder` — copyright holder (`{{HOLDER}}`); default `authors`.
   - `org` — GitHub org (`{{ORG}}`); default `$(repr(DEFAULT_ORG))`.
   - `repo` — `owner/name` slug (`{{REPO}}`); default `"{org}/{package}.jl"`.
-  - `reviewer` — dependabot reviewer/assignee handle (`{{REVIEWER}}`); default
-    `org` (so a person is never hardcoded; pass `""` to omit reviewers).
+  - `reviewer` — the GitHub handle (`{{REVIEWER}}`) that drives every place a
+    real reviewer/code-owner is needed: the `.github/CODEOWNERS` rule
+    (`* @{{REVIEWER}}`), the Dependabot `reviewers`, the version-bump assignee,
+    and the Claude bot's actor gate. A username or `org/team` slug — GitHub
+    cannot assign a bare org. When omitted (`nothing`), no owner is written
+    (CODEOWNERS ships a commented placeholder, Dependabot gets no `reviewers`)
+    so a bare org is never hardcoded.
   - `year` — copyright year (`{{YEAR}}`); default the current year.
   - `license` — the SPDX licence identifier (one of
     `$(join(SUPPORTED_LICENSES, ", "))`) selecting which `LICENSE` text
@@ -339,7 +361,25 @@ function scaffold_inputs(target_dir::AbstractString;
     hold = holder === nothing ? auth : holder
     rp = repo === nothing ?
          (pkg === nothing ? nothing : string(org, "/", pkg, ".jl")) : repo
+    # The `reviewer` handle drives every place a real reviewer/code-owner is
+    # needed: the CODEOWNERS line, the Dependabot `reviewers`, the version
+    # bump's assignee, and the Claude bot's actor gate. A GitHub username (or an
+    # `org/team` slug) is required — GitHub cannot assign a BARE org, so when no
+    # handle is given those owners are left empty (with a note) rather than
+    # producing PRs that error with "can't assign <org> as a reviewer".
+    has_reviewer = reviewer !== nothing && !isempty(reviewer)
     rev = reviewer === nothing ? org : reviewer
+    # The CODEOWNERS rule (active when a handle is given; otherwise a commented
+    # placeholder so a bare org is never written as a code owner).
+    codeowners_line = has_reviewer ? string("* @", reviewer) :
+                      string("# * @", org, "/maintainers  # set the `reviewer` ",
+        "input to a GitHub handle to enable")
+    # The per-entry Dependabot `reviewers:` block (empty when no handle). The
+    # template carries the 4-space indent before the following `commit-message:`
+    # key, so this fragment only supplies the reviewers lines themselves.
+    dependabot_reviewers = has_reviewer ?
+                           string("    reviewers:\n      - \"", reviewer,
+        "\"\n") : ""
     yr = year === nothing ? Dates.year(Dates.now()) : year
     uuid = _project_string(proj, "uuid")
     # A fresh UUID for the seeded ADFixtures registry skeleton (a new path
@@ -402,6 +442,8 @@ function scaffold_inputs(target_dir::AbstractString;
         DOCS_DEPLOY_URL = docs_deploy_url, DOCS_URL = docs_url,
         DOI = doi, ZENODO_BADGE = zenodo_badge,
         TUTORIALS_SUBDIR = tutorials_subdir, AD_BUILD_COUNT = ad_build_count,
+        CODEOWNERS_LINE = codeowners_line,
+        DEPENDABOT_REVIEWERS = dependabot_reviewers,
         KIT_DEP_LINE = kit_dep,
         KIT_SOURCE_LINE = kit_source, SYNC_INSTALL = sync_install)
 end

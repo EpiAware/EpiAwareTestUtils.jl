@@ -1,8 +1,6 @@
-# Code owners for automatic review requests.
+# MANAGED by EpiAwarePackageTools.scaffold — do not edit by hand.
 #
-# PACKAGE-OWNED: scaffold writes this once and never overwrites it. Replace the
-# example below with real GitHub handles or an `{{ORG}}/team` slug. A bare org
-# CANNOT be a code owner, so this ships commented out — uncomment and edit it.
-# See https://docs.github.com/articles/about-code-owners
-#
-# * @{{ORG}}/maintainers
+# Default code owners for automatic review requests. Driven by the `reviewer`
+# input (a GitHub handle); change it by re-running scaffold/update with a new
+# `reviewer`. See https://docs.github.com/articles/about-code-owners
+{{CODEOWNERS_LINE}}
