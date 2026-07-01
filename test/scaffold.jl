@@ -1161,7 +1161,12 @@
                     # comments themselves suggest for kit development — so the
                     # rest of each env (every other dep/compat bound) is proven
                     # to resolve hermetically.
-                    kit_root = pkgdir(EpiAwarePackageTools)
+                    # Forward-slash the absolute path: a backslashed Windows
+                    # path (`C:\...`) in a TOML basic string is an invalid
+                    # escape sequence, and Julia/Pkg resolve forward slashes on
+                    # every platform.
+                    kit_root = replace(
+                        pkgdir(EpiAwarePackageTools), '\\' => '/')
                     kit_pin = r"EpiAwarePackageTools = \{url = \"[^\"]+\", " *
                               r"rev = \"main\"\}"
                     for env in ("test", "test/jet")
