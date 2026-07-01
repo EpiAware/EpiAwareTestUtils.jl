@@ -209,6 +209,12 @@ const SCAFFOLD_TEMPLATES = Template[
         "docs/src/.vitepress/theme/style.css", true, false),
     Template("docs/src/components/VersionPicker.vue",
         "docs/src/components/VersionPicker.vue", true, false),
+    # The GitHub-stars navbar widget (Vue component + its build-time star-count
+    # loader). Both carry `{{REPO}}` so the widget targets the adopting repo.
+    Template("docs/src/components/StarUs.vue",
+        "docs/src/components/StarUs.vue", true, true),
+    Template("docs/src/components/stargazers.data.ts",
+        "docs/src/components/stargazers.data.ts", true, true),
 
     # --- package-owned skeletons (written once, never overwritten) ---
     # The standard DocStringExtensions `@template` conventions. Package-owned
@@ -220,6 +226,14 @@ const SCAFFOLD_TEMPLATES = Template[
     # Substituted so the benchmark nav entry (`{{BENCHMARKS_NAV}}`) is present
     # only when `benchmarks = true`; package-owned so a package extends the tree.
     Template("docs/pages.jl", "docs/pages.jl", false, true),
+    # Authored docs source pages, distinct from the README-derived home page:
+    # a getting-started quickstart and an infrastructure/template-sync guide.
+    # Package-owned (write-once) so a package grows its own content without a
+    # sync reverting it; the nav entries live in the package-owned `pages.jl`.
+    Template("docs/src/getting-started/index.md",
+        "docs/src/getting-started/index.md", false, true),
+    Template("docs/src/getting-started/infrastructure.md",
+        "docs/src/getting-started/infrastructure.md", false, true),
     # The optional Literate/tutorial + README-rewrite config `make.jl` reads
     # (empty by default), and the release-notes page header (NEWS.md prepend).
     # Substituted so `BENCHMARK_PAGE` defaults to the `benchmarks` flag.
@@ -774,14 +788,54 @@ end
 # Content outside the markers is never touched. Returns `(action, changed)`
 # where action is `:created`/`:injected`/`:refreshed` and `changed` is whether
 # the file content changed.
-# A starter README body for a package that has none yet, following the section
-# structure of CensoredDistributions.jl (Why / Getting started / Where to learn
-# more / Supporting and citing / Contributing / Code of conduct), parameterised
-# from the repo slug, package name, and docs host. Only seeded when no README
-# exists; thereafter the body is package-owned and only the badge block is
-# managed.
+# A starter README body for a package that has none yet, following the standard
+# EpiAware section structure (Why / Getting started / Where to learn more /
+# Contributing / Supporting and citing / Code of conduct — the order
+# `STANDARD_README_SECTIONS` in `quality.jl` requires), parameterised from the
+# repo slug, package name, and docs host. The "Supporting and citing" section
+# carries a BibTeX + DOI citation skeleton (package-owned content). Only seeded
+# when no README exists; thereafter the body is package-owned and only the badge
+# block is managed.
+# The BibTeX `author = {A and B}` field from the kit's comma-joined author
+# display names. Package-owned content: seeded once as a starting citation and
+# never rewritten, since each package cites itself with its own author list.
+function _bibtex_authors(authors::Union{Nothing, AbstractString})
+    (authors === nothing || isempty(strip(authors))) &&
+        return "Author One and Author Two"
+    return join((strip(a) for a in split(authors, ',') if !isempty(strip(a))),
+        " and ")
+end
+
+# A BibTeX `@software` entry for the package, mirroring CensoredDistributions.jl.
+# `doi` fills the `doi` field when known; otherwise a placeholder marks where the
+# Zenodo DOI goes once the package is released. The citation is package-owned
+# (seeded once), so the author list and DOI are a starting point to edit.
+function _citation_block(repo::AbstractString, pkg::AbstractString,
+        authors::Union{Nothing, AbstractString},
+        year::Union{Nothing, AbstractString},
+        doi::Union{Nothing, AbstractString})
+    key = replace(pkg, r"[^A-Za-z0-9]" => "_") * "_jl"
+    yr = year === nothing ? string(Dates.year(Dates.now())) : year
+    doi_line = doi === nothing ?
+               "  doi          = {10.5281/zenodo.XXXXXXX}," *
+               " # replace once released\n" :
+               "  doi          = {" * doi * "},\n"
+    return string(
+        "```bibtex\n",
+        "@software{", key, ",\n",
+        "  author       = {", _bibtex_authors(authors), "},\n",
+        "  title        = {", pkg, ".jl},\n",
+        "  year         = {", yr, "},\n",
+        doi_line,
+        "  url          = {https://github.com/", repo, "}\n",
+        "}\n```\n\n")
+end
+
 function _seed_readme_body(repo::AbstractString, pkg::AbstractString,
-        docs_url::Union{Nothing, AbstractString})
+        docs_url::Union{Nothing, AbstractString};
+        authors::Union{Nothing, AbstractString} = nothing,
+        year::Union{Nothing, AbstractString} = nothing,
+        doi::Union{Nothing, AbstractString} = nothing)
     host = docs_url === nothing ? _docs_url(repo, nothing) : docs_url
     org = first(split(repo, '/'))
     stable = host === nothing ? nothing : "https://" * host * "/stable/"
@@ -799,14 +853,15 @@ function _seed_readme_body(repo::AbstractString, pkg::AbstractString,
         "## Where to learn more\n\n",
         "- [GitHub Discussions](https://github.com/$repo/discussions)\n",
         "- [GitHub Repository](https://github.com/$repo)\n\n",
-        "## Supporting and citing\n\n",
-        "If you would like to support $pkg, please star the repository — ",
-        "such metrics help secure future funding. If you use $pkg in your ",
-        "work, please cite it.\n\n",
         "## Contributing\n\n",
         "We welcome contributions and new contributors! This package ",
         "follows [ColPrac](https://github.com/SciML/ColPrac) and the ",
         "[SciML style](https://github.com/SciML/SciMLStyle).\n\n",
+        "## Supporting and citing\n\n",
+        "If you would like to support $pkg, please star the repository — ",
+        "such metrics help secure future funding.\n\n",
+        "If you use $pkg in your work, please cite it:\n\n",
+        _citation_block(repo, pkg, authors, year, doi),
         "## Code of conduct\n\n",
         "Please note that the $pkg project is released with a ",
         "[Contributor Code of Conduct]($coc). By contributing, you agree ",
@@ -817,12 +872,15 @@ function _apply_badges(readme::AbstractString, repo, pkg; ad::Bool,
         license::AbstractString = DEFAULT_LICENSE,
         docs_url::Union{Nothing, AbstractString} = nothing,
         doi::Union{Nothing, AbstractString} = nothing,
-        zenodo_badge::Union{Nothing, AbstractString} = nothing)
+        zenodo_badge::Union{Nothing, AbstractString} = nothing,
+        authors::Union{Nothing, AbstractString} = nothing,
+        year::Union{Nothing, AbstractString} = nothing)
     badges = _render_badges(repo, pkg; ad = ad, license = license,
         docs_url = docs_url, doi = doi, zenodo_badge = zenodo_badge)
     block = BADGES_START * "\n" * badges * "\n" * BADGES_END
     if !isfile(readme)
-        body = _seed_readme_body(repo, pkg, docs_url)
+        body = _seed_readme_body(repo, pkg, docs_url;
+            authors = authors, year = year, doi = doi)
         write(readme, "# " * pkg * "\n\n" * block * "\n\n" * body)
         return (:created, true)
     end
@@ -1024,7 +1082,8 @@ function _apply(target_dir::AbstractString; managed_only::Bool, force::Bool,
         readme_action = first(
             _apply_badges(readme, repo, pkg; ad = ad, license = lic,
             docs_url = inputs.DOCS_URL, doi = inputs.DOI,
-            zenodo_badge = inputs.ZENODO_BADGE))
+            zenodo_badge = inputs.ZENODO_BADGE,
+            authors = inputs.AUTHORS, year = inputs.YEAR))
     end
     # LICENSE is package-owned and write-once: only `scaffold`/`generate`
     # (`managed_only = false`) may write it, and only when absent. `update`

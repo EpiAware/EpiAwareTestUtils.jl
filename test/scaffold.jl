@@ -196,9 +196,45 @@
                     "docs/src/.vitepress/config.mts",
                     "docs/src/.vitepress/theme/index.ts",
                     "docs/src/.vitepress/theme/style.css",
-                    "docs/src/components/VersionPicker.vue")
+                    "docs/src/components/VersionPicker.vue",                 # The GitHub-stars navbar widget + its star-count loader.
+                    "docs/src/components/StarUs.vue",
+                    "docs/src/components/stargazers.data.ts",                 # Authored source pages distinct from the README home page.
+                    "docs/src/getting-started/index.md",
+                    "docs/src/getting-started/infrastructure.md")
                     @test isfile(joinpath(dir, f))
                 end
+                # The stars widget targets the adopting repo (no owner/repo
+                # hardcoded) and its theme + package.json wiring is present.
+                star = read(joinpath(dir, "docs/src/components/StarUs.vue"),
+                    String)
+                @test occursin("github.com/EpiAware/Wombat.jl", star)
+                @test !occursin("{{REPO}}", star)
+                data_ts = read(
+                    joinpath(dir, "docs/src/components/stargazers.data.ts"),
+                    String)
+                @test occursin("EpiAware/Wombat.jl", data_ts)
+                theme = read(
+                    joinpath(dir, "docs/src/.vitepress/theme/index.ts"), String)
+                @test occursin("StarUs", theme)
+                @test occursin("d3-format",
+                    read(joinpath(dir, "docs/package.json"), String))
+                # The getting-started + infrastructure pages are authored,
+                # package-owned, and substituted (no unresolved placeholders).
+                gs = read(joinpath(dir, "docs/src/getting-started/index.md"),
+                    String)
+                @test occursin("@id getting-started", gs)
+                @test occursin("Pkg.add(\"Wombat\")", gs)
+                @test !occursin("{{", gs)
+                infra = read(
+                    joinpath(dir, "docs/src/getting-started/infrastructure.md"),
+                    String)
+                @test occursin("@id infrastructure", infra)
+                @test occursin("template-sync", infra)
+                @test !occursin("{{", infra)
+                # The nav wires the getting-started section into pages.jl.
+                pgs = read(joinpath(dir, "docs/pages.jl"), String)
+                @test occursin("getting-started/index.md", pgs)
+                @test occursin("getting-started/infrastructure.md", pgs)
                 # make.jl is a thin caller into the kit's DocsBuild machinery
                 # (DocumenterVitepress/Literate/makedocs all live in the kit
                 # now), and is fully substituted.
@@ -823,6 +859,15 @@
                 @test occursin("## Contributing", txt)
                 @test occursin("## Code of conduct", txt)
                 @test occursin("CODE_OF_CONDUCT.md", txt)
+                # The seeded "Supporting and citing" carries a BibTeX block +
+                # DOI placeholder (package-owned citation content, #67/#80).
+                @test occursin("## Supporting and citing", txt)
+                @test occursin("```bibtex", txt)
+                @test occursin("@software{Fresh_jl", txt)
+                @test occursin("title        = {Fresh.jl}", txt)
+                @test occursin("10.5281/zenodo", txt)
+                # Authors are threaded from Project.toml into the BibTeX entry.
+                @test occursin("Ada Lovelace", txt)
             end
         end
 

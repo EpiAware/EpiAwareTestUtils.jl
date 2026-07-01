@@ -9,6 +9,14 @@
 
 pages = [
     "Home" => "index.md",
+    # Authored quickstart + infrastructure guide (package-owned source pages,
+    # distinct from the README-derived home page). Add tutorials under
+    # `getting-started/` as the package grows.
+    "Getting started" => [
+        "Overview" => "getting-started/index.md",
+        "Infrastructure and template sync" =>
+            "getting-started/infrastructure.md"
+    ],
     "API reference" => [
         "Public API" => "lib/public.md",
         "Internal API" => "lib/internals.md"
