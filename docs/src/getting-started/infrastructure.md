@@ -3,8 +3,8 @@
 The kit does two jobs for an adopting package: it writes the standard
 infrastructure once (`scaffold`), and it keeps that infrastructure current
 afterwards (`update`, driven on a schedule).
-This page explains the sync machinery and how the kit dogfoods it on its own
-repository.
+This page explains the sync machinery and how the kit applies it to itself on
+its own repository.
 
 ## Managed and package-owned files
 
@@ -42,7 +42,7 @@ Two workflows keep an adopting package aligned with the kit.
 An improvement made once in the kit therefore propagates to every adopting
 package on the next sync.
 
-## How the kit dogfoods this
+## How the kit applies this to itself
 
 The kit manages its own repository the same way an adopter's is managed, with
 one difference: it is a tooling package, so it scaffolds itself with

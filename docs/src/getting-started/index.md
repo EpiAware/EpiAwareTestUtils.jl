@@ -58,6 +58,14 @@ scaffolds it:
 generate("path/to/NewPkg", "NewPkg")
 ```
 
+## Customising this page
+
+This page is package-owned: `scaffold` writes it once, and `update` never
+touches it again, so anything you change here stays exactly as you leave it.
+This copy documents the kit itself; an adopting package gets a placeholder
+quickstart in its place, ready to replace with its own installation steps
+and first example, reordered or extended however reads best.
+
 ## Learning more
 
 - The home page documents every helper, the managed-versus-package-owned
