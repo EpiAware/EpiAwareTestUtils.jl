@@ -229,6 +229,25 @@ EpiAwarePackageTools = {url = "https://github.com/EpiAware/EpiAwarePackageTools.
 This package follows [ColPrac](https://github.com/SciML/ColPrac) and the
 [SciML style](https://github.com/SciML/SciMLStyle).
 
+## Supporting and citing
+
+If you would like to support EpiAwarePackageTools, please star the repository —
+such metrics help secure future funding.
+
+If you use EpiAwarePackageTools in your work, please cite it:
+
+```bibtex
+@software{EpiAwarePackageTools_jl,
+  author       = {Abbott, Sam and EpiAware contributors},
+  title        = {EpiAwarePackageTools.jl},
+  year         = {2025},
+  doi          = {10.5281/zenodo.XXXXXXX},
+  url          = {https://github.com/EpiAware/EpiAwarePackageTools.jl}
+}
+```
+
+The DOI is a placeholder until the package is released to Zenodo.
+
 ## License
 
 Released under the [MIT License](LICENSE).
