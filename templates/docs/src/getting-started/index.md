@@ -32,6 +32,13 @@ using {{PACKAGE}}
 _Replace this with a short, runnable example that shows the package's main
 entry point._
 
+## Customising this page
+
+This page is package-owned: `scaffold` writes it once, and `update` never
+touches it again, so anything you change here stays exactly as you leave it.
+Replace the installation steps and first example above with your package's
+real quickstart, add or drop sections, and reorder them however reads best.
+
 ## Learning more
 
 - Want the full interface? See the [Public API](@ref public-api).

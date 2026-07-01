@@ -4,7 +4,7 @@
 # (`update("."; ad = {{AD}}, benchmarks = {{BENCHMARKS}})`) and, when the
 # committed infra has drifted from
 # the kit, opens (or refreshes) a PR with the refresh. This is the auto-refresh
-# half of the dogfooding loop: the `self-drift` check guards every push/PR, and
+# half of the self-sync loop: the `self-drift` check guards every push/PR, and
 # this workflow proactively pulls the newest standard on a schedule and reacts
 # to Dependabot action bumps so a repo never silently falls behind.
 #
